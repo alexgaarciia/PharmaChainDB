@@ -1,0 +1,124 @@
+-- DROP SEQUENCES
+DROP SEQUENCE SEQ_TYPE_ADMINISTRATION;
+DROP SEQUENCE SEQ_MEDICINE;
+
+
+-- QUERIES
+---- Query 1: Obtain the average number of medications per pharmacy.
+
+--- For this query, simply select each pharmacy from the 'STOCK' table, and use the function 'AVG' in order to
+--- obtain the average of medications. The function 'ROUND' was also used because without it, a lot of unnecessary
+--- decimals places will be obtained.
+SELECT PHARMACY_CODE, ROUND(AVG(QUANTITY)) AS "Average number of medications per pharmacy"
+FROM STOCK
+GROUP BY PHARMACY_CODE;
+
+
+---- Query 2: Get the number of employees per pharmacy for those who work in the pharmacy in the day shift.
+---- The query must return the identifier of the pharmacy, how many employees do you have assigned and the name,
+---- last name and Ssn of the employees.
+
+--- For the second query, the decision of dividing it into two queries was taken:
+--- In the first one, the desired information is selected (pharmacy code, name, last name, and SSN), using 'WHERE' to obtain
+--- the corresponding shift and then, filter to those who are assigned a 'morning' shift. 
+--- Until here, everything seems to be correct. Nonetheless, if the function 'COUNT(*)' was intended to be used to count the
+--- number of employees, it would not be possible because it counts all of them individually, and the 'COUNT(*)' function will
+--- produce a column filled with '1's. 
+--- There are two possible solutions for this: either do another query independent from the first one to just get the number of
+--- employees whose shift is morning; or in the first SELECT, include another query that counts all the employees who have a
+--- morning shift.
+SELECT E.PHARMACY_CODE, E.NAME, E.LASTNAME, E.SSN, 
+(SELECT  COUNT(E2.SSN)
+FROM EMPLOYEE E2, SHIFT S2
+WHERE E.PHARMACY_CODE = E2.PHARMACY_CODE AND E2.SHIFT_CODE = S2.CODE AND S2.NAME = 'MORNING'
+GROUP BY E2.PHARMACY_CODE) AS "NUMBER OF EMPLOYEES"
+FROM EMPLOYEE E, SHIFT S
+WHERE E.SHIFT_CODE = S.CODE AND S.NAME = 'MORNING';
+
+
+---- Query 3: List the number of purchase orders from a pharmacy and order them by purchase order date. The query must
+---- return the purchase order identifier, the medication and the number of units requested.
+
+--- For the third query, the desired information ('PHARMACY_CODE', 'MEDICINE_CODE', 'QUANTITY', and 'ORDER_DATE')
+--- is selected from the 'ORDER' table. The most important part is ordering them by order date in ascending order.
+SELECT PHARMACY_CODE, MEDICINE_CODE, QUANTITY, ORDER_DATE
+FROM "ORDER"
+ORDER BY ORDER_DATE ASC;
+
+
+---- Query 4: Obtain the number of purchases orders made per pharmacy between May and June 2022.
+
+--- Finally, for the fourth query, the 'PHARMACY_CODE' is selected to be the identifier of the 'ORDER' table (even though
+--- as there are several primary keys, a different one could have been chosen to be the identifier).
+--- Then, the 'COUNT' function is used to count the number of orders. To achieve only counting those in the specified dates,
+--- the 'WHERE' function was used to filter the results. Lastly, these are grouped by 'PHARMACY_CODE'.
+SELECT COUNT(*) AS "Number of purchases", O.PHARMACY_CODE
+FROM "ORDER" O
+WHERE (O.ORDER_DATE BETWEEN '01-05-2022' AND '30-06-2022')
+GROUP BY O.PHARMACY_CODE;
+
+
+-- TRIGGERS
+---- Create a sequence to increase the id code in the TYPE_ADMINISTRATION table.
+CREATE SEQUENCE SEQ_TYPE_ADMINISTRATION;
+/
+SELECT SEQ_TYPE_ADMINISTRATION.NEXTVAL FROM DUAL;
+/
+CREATE OR REPLACE TRIGGER TG_TYPE_ADMIN_B_INSERT
+BEFORE INSERT
+ON TYPE_ADMINISTRATION
+FOR EACH ROW
+BEGIN
+SELECT SEQ_TYPE_ADMINISTRATION.NEXTVAL INTO :NEW.CODE FROM DUAL;
+END;
+/
+
+---- Create a sequence to increase the id code in the MEDICINE table.
+CREATE SEQUENCE SEQ_MEDICINE;
+/
+SELECT SEQ_MEDICINE.NEXTVAL FROM DUAL;
+/
+CREATE OR REPLACE TRIGGER TG_MED_B_INSERT
+BEFORE INSERT
+ON MEDICINE
+FOR EACH ROW
+BEGIN
+SELECT SEQ_MEDICINE.NEXTVAL INTO :NEW.CODE FROM DUAL;
+END;
+/
+
+---- Trigger: Create a trigger when there are less than 3 units left in the stock insert a new order for the 
+---- medicine to one distributor in table ORDER.
+
+--- For the trigger, taking as a reference the body of a trigger, aspects along the lines of 'name_trigger', 'event',
+--- 'referenced_table', 'event_condition' and 'body_trigger' must be explained. First off, the name of the trigger ('name_trigger')
+--- is defined ('TG_ORDER_AFTER_INSERT_UDPATE'). Then, it is important to decide when should the trigger be activated ('event').
+--- In this case, it seemed comprehensive to activate it every time a medicine is inserted in the stock and every time the value
+--- of this medicine decreases or increases. Hence, 'AFTER INSERT OR UPDATE' is the best option for this reasoning. 
+--- Moving on, the table ('referenced_table') on which the trigger makes effect is 'STOCK'. Note that an extra variable is 
+--- declared due to the exact purpose that it will be used in the body of the trigger.
+
+--- Finally, the body of the trigger is defined. This part is key, since it includes not only when should the trigger act, but
+--- also what to do. As the manager is the only one able to place an order, this is chosen from the pharmacy whose stock is
+--- less than 3. The trigger must be activated if the stock of a certain medicine is less than 3; ergo, the condition is
+--- specified (IF :NEW.QUANTITY < 3). Last of all, it is specified what the trigger must do in case the condition is met: that is,
+--- it must insert an order in the 'ORDER' table. 
+
+--- Note that the keys of the 'ORDER' table are 'PHARMACY_CODE', 'MEDICINE_CODE', 'DISTRIBUTOR_CIF', 'ORDER_DATE', 'QUANTITY', 
+--- 'DELIVERY DATE' and 'EMPLOYEE_CODE'. The 'PHARMACY_CODE' and 'MEDICINE_CODE' are the ones from the row of the 'STOCK' table
+--- whose quantity is less than 3;  the 'DISTRIBUTOR_CIF' is a random distributor chosen by us; 'ORDER_DATE' is TRUNC(SYSDATE).
+--- SYSDATE sets the moment in which the new order is placed. Moreover, because it includes extra information like the hour, 
+--- the function 'TRUNC()' is used; 'QUANTITY' is a random number chosen by us; 'DELIVERY_DATE' is the same as 'ORDER_DATE' but
+--- adding 2, since the orders must arrive at most 2 days later; and, finally, 'EMPLOYEE_CODE' is set to the code of the manager
+--- of the pharmacy containing less than 3 medicines. 
+CREATE OR REPLACE TRIGGER TG_ORDER_AFTER_INSERT_UPDATE
+AFTER INSERT OR UPDATE
+ON STOCK
+FOR EACH ROW
+DECLARE MANAGER_SSN CHAR(9);
+BEGIN
+    SELECT MIN(SUPER_SSN) INTO MANAGER_SSN FROM EMPLOYEE WHERE PHARMACY_CODE = :NEW.PHARMACY_CODE;
+    IF :NEW.QUANTITY < 3 
+    THEN INSERT INTO "ORDER" VALUES (:NEW.PHARMACY_CODE, :NEW.MEDICINE_CODE, 'N1350645F', TRUNC(SYSDATE), 65, TRUNC(SYSDATE) + 2, MANAGER_SSN);
+    END IF;
+END;
